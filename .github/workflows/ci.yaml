@@ -18,7 +18,7 @@ env:
   IMAGE_NAME: iris-fastapi-api
   GAR_LOCATION: us-central1
   GAR_REPO: mlops-repository
-  IMAGE_URL: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPO }}/${{ env.IMAGE_NAME }}
+
 
 jobs:
   # ------------------------------------------------------------------
@@ -98,24 +98,24 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
-        
-      # --- 2. Build and Push Docker Image ---
-      - name: Create GCP Key File for Docker Build
+      # ------------------------------------------------------------------
+      # 2. FIX THE SYNTAX IN THE "Set IMAGE_URL" STEP
+      # ------------------------------------------------------------------
+      - name: Set IMAGE_URL
         run: |
-          echo '${{ secrets.GCP_SA_KEY }}' > gcp_key.json
+          # Use ${{ env.VAR }} context syntax, not $VAR shell syntax
+          echo "IMAGE_URL=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPO }}/${{ env.IMAGE_NAME }}" >> $GITHUB_ENV
+
+      - name: Configure Docker for Artifact Registry
+        # Use ${{ env.VAR }} context syntax here too
+        run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
 
       - name: Build and Push Docker Image
         run: |
           IMAGE_TAG=${{ github.sha }}
-          IMAGE_PATH=${{ env.IMAGE_URL }}:${IMAGE_TAG}
-          
-          docker build -t ${IMAGE_PATH} .
-          docker push ${IMAGE_PATH}
-          
-          rm gcp_key.json
-
+          # This step will now correctly read the IMAGE_URL from $GITHUB_ENV
+          docker build -t ${IMAGE_URL}:${IMAGE_TAG} .
+          docker push ${IMAGE_URL}:${IMAGE_TAG}
       # --- 3. Deploy to GKE ---
       - name: Get GKE Credentials
         uses: google-github-actions/get-gke-credentials@v2
@@ -126,7 +126,8 @@ jobs:
       - name: Deploy to GKE
         run: |
           IMAGE_TAG=${{ github.sha }}
-          IMAGE_PATH=${{ env.IMAGE_URL }}:${IMAGE_TAG}
+          # This step will also correctly read the IMAGE_URL
+          IMAGE_PATH=${IMAGE_URL}:${IMAGE_TAG}
 
           echo "Initiating rolling update with image: ${IMAGE_PATH}"
           kubectl apply -f deployment.yaml
