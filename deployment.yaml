@@ -1,9 +1,16 @@
+# deployment.yaml
+---
+# ----------------------------------------------------------------------
+# 1. Deployment: Defines the desired state for your application
+# ----------------------------------------------------------------------
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: iris-api-deployment
+  labels:
+    app: iris-api
 spec:
-  replicas: 2
+  replicas: 1 # Start with 1 replicas for basic availability
   selector:
     matchLabels:
       app: iris-api
@@ -14,6 +21,73 @@ spec:
     spec:
       containers:
       - name: iris-api
-        image: us-central1-docker.pkg.dev/week-1-474208/mlops-repository/iris-fastapi-api:latest
+        # Use a dynamic image path placeholder for CI/CD replacement
+        image: us-central1-docker.pkg.dev/week-1-474208/mlops-repository/iris-fastapi-api:manual-test 
         ports:
-        - containerPort: 8000
+        - containerPort: 8080 # Corrected port to match Gunicorn/Uvicorn
+        
+        # --- ADDED: Resource Definitions (REQUIRED for HPA) ---
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m" # Request 1/4 of a CPU core
+          limits:
+            memory: "512Mi"
+            cpu: "1000m" # Limit to 1/2 of a CPU core
+            
+        # --- ADDED: Resilience Probes ---
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          
+---
+# ----------------------------------------------------------------------
+# 2. Service: Exposes the Deployment publicly
+# ----------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: iris-api-service
+spec:
+  type: LoadBalancer # Creates a public, external IP address
+  selector:
+    app: iris-api
+  ports:
+    - protocol: TCP
+      port: 80 # Public port (users access this port)
+      targetPort: 8080 # Target container port
+
+---
+# ----------------------------------------------------------------------
+# 3. HorizontalPodAutoscaler (HPA): The autoscaling rules
+# ----------------------------------------------------------------------
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: iris-api-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: iris-api-deployment
+  # This fulfills "default pod availability of 1" and "max_pods: 3"
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        # Target 50% CPU. If load goes above this, Kubernetes
+        # will add another pod (up to 3).
+        averageUtilization: 50
